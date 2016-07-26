@@ -16,14 +16,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Here we simulate 100 buildings that are equipped with a home automation system, that receoved a price of electricity and scheules the consumption such that the total cost is minimized. The heating dynamics of each building is described by a state-space model that consists of three states: indoor air temperature, floor temperature, and temperature of the water inside a tank connected to a heat pump. The only input is the electricity consumption.
 
-
-$$\underset{ \boldsymbol y, \boldsymbol x ,\boldsymbol v }{\text{Minimize}}  \sum_{t=1}^T p_t  x_t + \rho v_t  	$$
-$$ \boldsymbol y_{t} = \boldsymbol  A \boldsymbol y_{t-1} + \boldsymbol B x_{t-1} + \boldsymbol E  \boldsymbol z_{t-1} 	\   \forall t 	$$
-$$  0 \leq x_t \leq x^{max} 	 \forall t 	$$
-$$  y_{t,min}^r \leq y_t^r + v_t   	 \forall t 	$$
-$$ y_{t,max}^r \geq y_t^r - v_t   	 \forall t $$
-$$ v_t \geq 0    	 \forall t 	$$
-
 A total of 100 buildings are simulated by randomly perturbing the heat-transfer coefficients. Modifying slightly these coefficients allows us to simulate the behavior of buildings with different structural characteristics. The perturbations are randomly drawn from a uniform distribution centered around zero with a variance equal to 1/50 the magnitude of the corresponding coefficient. The magnitude of the perturbations is chosen high enough so that different building structures are modeled, but not too high so that the state-space system becomes unstable. The magnitude of the perturbations has been chosen by trial-and-error, and its effectiveness is proven to be useful as explained in the remaining of this section and in the case study
 
 Together with the simulated houses, we algo put together some calendar variables that will help explain the variabiliy of the parameters.
