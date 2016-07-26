@@ -1,0 +1,275 @@
+---
+title: "Simulation of dataset of price-responsive buildings"
+author: "Javier Saez Gallego"
+date: "July 26, 2016"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Peparing the dataset
+
+Here we simulate 100 buildings that are equipped with a home automation system, that receoved a price of electricity and scheules the consumption such that the total cost is minimized. The heating dynamics of each building is described by a state-space model that consists of three states: indoor air temperature, floor temperature, and temperature of the water inside a tank connected to a heat pump. The only input is the electricity consumption.
+
+
+$$\underset{ \boldsymbol y, \boldsymbol x ,\boldsymbol v }{\text{Minimize}}  \sum_{t=1}^T p_t  x_t + \rho v_t  	$$
+$$ \boldsymbol y_{t} = \boldsymbol  A \boldsymbol y_{t-1} + \boldsymbol B x_{t-1} + \boldsymbol E  \boldsymbol z_{t-1} 	\   \forall t 	$$
+$$  0 \leq x_t \leq x^{max} 	 \forall t 	$$
+$$  y_{t,min}^r \leq y_t^r + v_t   	 \forall t 	$$
+$$ y_{t,max}^r \geq y_t^r - v_t   	 \forall t $$
+$$ v_t \geq 0    	 \forall t 	$$
+
+A total of 100 buildings are simulated by randomly perturbing the heat-transfer coefficients. Modifying slightly these coefficients allows us to simulate the behavior of buildings with different structural characteristics. The perturbations are randomly drawn from a uniform distribution centered around zero with a variance equal to 1/50 the magnitude of the corresponding coefficient. The magnitude of the perturbations is chosen high enough so that different building structures are modeled, but not too high so that the state-space system becomes unstable. The magnitude of the perturbations has been chosen by trial-and-error, and its effectiveness is proven to be useful as explained in the remaining of this section and in the case study
+
+Together with the simulated houses, we algo put together some calendar variables that will help explain the variabiliy of the parameters.
+
+## Initialization
+
+First, we define the working paths of R. Also, we load GAMS, the auxiliary functions, and the [R_to_GDX](https://github.com/jsga/R_to_GAMS) functions. We create a working dorectory to allocate the GAMS auxiliary files.
+
+```{r,eval=FALSE}
+wpath = '/home/jsga/inverse_opt/'
+gams_file = "/home/jsga/GAMS23.7/gams"
+library('gdxrrw')
+igdx('/home/jsga/GAMS24.2.1/gams24.2_linux_x64_64_sfx')
+
+newDir = paste(wpath, 'Working_dir',sep="")
+dir.create(newDir)
+setwd(newDir)
+
+source(paste(wpath,"AuxiliaryFunctions.R",sep=""))
+source(paste(wpath,"R_to_GDX.r",sep=""))
+```
+
+
+
+## Input parameters
+
+Define the parameters that define the "average" house (taken from _Zugno et al._ "A bilevel model for electricity retailers' participation in a demand response market environment").
+
+```{r,eval=FALSE}
+T=24
+D=28*3
+set.seed(100)
+price = rep(c(32.02,31.08,30.62,30.19,30.36,29.95,36.41,38.09,38.82,38.23,37.80,37.37,37.12,37.22,37.07,36.95,37.58,37.68,36.98,36.82,35.86,32.38,32.09,29.12),D) + rnorm(T*D,0,3)
+pv = 1000
+a11 = 0.4103  # Tr(t-1) -> Tr
+a12 = 0.5586  # Tf(t-1) -> Tr
+a13 = 0.0028  # Tw(t-1) -> Tr
+
+a21 = 0.1092  # Tr(t-1) ->Tf
+a22 = 0.87    # Tf(t-1) ->Tf
+a23 = 0.0078  # Tw(t-1) ->Tf
+
+a31 = 0.0022  # Tr(t-1) -> Tw
+a32 = 0.031   # Tf(t-1) -> Tw 
+a33 = 0.975   # Tw(t-1) -> Tw
+
+b1 = 0.0044   # Wc(t-1) -> Tr
+b2 = 0.0173   # Wc(t-1) -> Tf
+b3 =  4.2332  # Wc(t-1) -> Tw
+
+d1 = 0.01    # S(t-1) -> Tr
+d2 = 0.001  # S(t-1) -> Tf
+
+e1 = 0.0029   # Ta(t-1) -> Tr
+e2 = 0        # Ta(t-1) -> Tf
+e3 = 0        # Ta(t-1) -> Tw
+
+maxHP = 0.33 # Kwh
+minHP = 0
+rampUpHP = maxHP/1
+rampDownHP = -maxHP/1
+S = rep(c( 0,0,0,0,0,0,50*sin( 2*pi*(1:12)/24) + rgeom(12,0.1),0,0,0,0,0,0),times=D)*rlnorm(T*D, meanlog = 0, sdlog = 0.4)
+Ta = 5 + 10*cos( 2*pi*12:(T*D+11)/24) + rnorm(T*D,0,5)
+```
+
+It is important to note the comfort bands, defined below. For non-responsive houses we can set the bands to be equal:
+
+```{r,eval=FALSE}
+meanComfort = rep(c(20,20,20,20,20,20,20,21,21,21,21,21,21,21,21,21,21,21,21,21,21,20,20,20),times=D)
+maxComfort = meanComfort+1
+minComfort = meanComfort-1
+```
+
+
+## Simulation in a loop
+
+We simulate different houses by randomly perturbing the heat-transfer coefficients. We generate 3 times more houses than we need and then discard the ones with highest "discomfort". The reason is that, for some of the simulated state-space model, the system is unstable. In this way we just keep the "good" ones.
+
+The function `heat_pump_sim()` is defined in `AuxiliaryFunctions.R`.
+```{r,eval=FALSE}
+H = 100# Number of houses
+WC_all_l = matrix(NA,ncol=0,nrow=T*D)
+Tr_all_l = matrix(NA,ncol=0,nrow=T*D)
+Tf_all_l = matrix(NA,ncol=0,nrow=T*D)
+Tw_all_l = matrix(NA,ncol=0,nrow=T*D)
+D_all_l = c()
+param_pool = list()
+stop=F # Stop bool
+i=1 # Count number of saved simulation
+l = 1 # Count rejected simulations
+
+while(stop==F){
+  # Save the parameters of the population for later use
+  K=50
+  param_pool$a11[i] = a11+runif(1,-a11/K,a11/K)
+  param_pool$a12[i] = a12+runif(1,-a12/K,a12/K)
+  param_pool$a13[i] = a13+runif(1,-a13/K,a13/K)
+  param_pool$a21[i] = a21+runif(1,-a21/K,a21/K)
+  param_pool$a22[i] = a22+runif(1,-a22/K,a22/K)
+  param_pool$a23[i] = a23+runif(1,-a23/K,a23/K)
+  param_pool$a31[i] = a31+runif(1,-a31/K,a31/K)
+  param_pool$a32[i] = a32+runif(1,-a32/K,a32/K)
+  param_pool$a33[i] = a33+runif(1,-a33/K,a33/K)
+  
+  param_pool$b1[i] = b1
+  param_pool$b2[i] = b2
+  param_pool$b3[i] = b3
+  
+  param_pool$d1[i] = d1#+runif(1,-d1/K,d1/K)
+  param_pool$d2[i] = d2#+runif(1,-d2/K,d2/K)
+  
+  param_pool$e1[i] = e1 
+  param_pool$e2[i] = e2
+  param_pool$e3[i] = e3
+  
+  # Perform the optimization
+  HP_sol = heat_pump_sim(price,Ta,S,pv, # Price, temperature and solar are the same for all
+                         param_pool$a11[i],param_pool$a12[i],param_pool$a13[i],
+                         param_pool$a21[i],param_pool$a22[i],param_pool$a23[i],
+                         param_pool$a31[i],param_pool$a32[i],param_pool$a33[i],
+                         param_pool$b1[i],param_pool$b2[i],param_pool$b3[i],
+                         param_pool$d1[i],param_pool$d2[i],
+                         param_pool$e1[i],param_pool$e2[i],param_pool$e3[i],
+                         maxHP,minHP,rampUpHP,rampDownHP,minComfort,maxComfort,
+                         folder_file = paste(wpath,"GAMS_models/",sep=""),N=T*D)
+  if(HP_sol$status != 1){
+    message(paste( 'Status sol not optimal',HP_sol$status))
+    Sys.sleep('5')
+  }
+  
+  WC_all_l = cbind(WC_all_l,HP_sol$Wc)
+  Tr_all_l = cbind(Tr_all_l,HP_sol$Tr)
+  Tf_all_l = cbind(Tf_all_l,HP_sol$Tf)
+  Tw_all_l = cbind(Tw_all_l,HP_sol$Tw)
+  D_all_l = c(D_all_l,sum(HP_sol$D))
+  # Increase iteration of saved
+  i = i+1
+  # Post messahe
+  if(i%%50 == 0) message(paste("sim nr",i))
+  
+  # Check for end of loop
+  if(i > 3*H){
+    stop=TRUE
+    system('notify-send Finished loop')
+  }
+  
+}
+
+# Keep the simulated values with lowest discomfort
+i_keep = order(D_all_l)[1:H]
+WC_all = WC_all_l[,i_keep]
+Tr_all = Tr_all_l[,i_keep]
+Tf_all = Tf_all_l[,i_keep]
+Tw_all = Tw_all_l[,i_keep]
+D_all = D_all_l[i_keep]
+load_all = rowSums(WC_all)
+```
+
+
+
+## Generate regressors
+
+Here we create some time and calendar variables to support the estimation process.
+
+```{r,eval=FALSE}
+# Create time indicator
+Time = rep(0:23,D)
+
+# Create dummy variables for time
+## Weekly fourier
+fourier = function(t,terms,period,names_col=c("S","C")){
+  n <- length(t)
+  X <- matrix(,nrow=n,ncol=2*terms)
+  for(i in 1:terms){
+    X[,2*i-1] <- sin(2*pi*i*t/period)
+    X[,2*i] <- cos(2*pi*i*t/period)
+  }
+  colnames(X) <- paste(names_col,rep(1:terms,rep(2,terms)),sep="")
+  return(X)
+}
+
+N = length(Time)
+data_hour = scale(data.frame(fourier(1:N,16,96,c("Daily_S","Daily_C"))))
+
+# Add binary indicator of hour
+data_hour_bin = matrix(,ncol=24,nrow=N)
+for(i in 1:24) data_hour_bin[,i] = (as.numeric(Time == i-1))
+
+data_hour_bin = data.frame(data_hour_bin)
+colnames(data_hour_bin) = paste('H',0:23,sep=".")
+```
+
+
+Also, we lag the simulated load and the price. Past values of the load are used to explain the current load.
+
+```{r,eval=FALSE}
+data_aux = data.frame( Time = Time,
+                       price = price,
+                       load = load_all,
+                       S = S,
+                       Ta = Ta,
+                       data_hour,
+                       data_hour_bin)
+
+# Load lag function
+source(paste(wpath,'lagmatrix.R',sep=""))
+
+# Lag the load
+n_lag = 24
+load_lag  = lagmatrix(load_all,n_lag,prenames="load")
+# Merge with dataset- Remove n_lag first observations
+data_lag = cbind(data_aux[-(1:n_lag),],load_lag)
+
+# Lag the price
+price_lag  = lagmatrix(data_aux$price,n_lag,prenames="price")
+# Merge with dataset- Remove n_lag first observations
+data_lag = cbind(data_lag,price_lag) # the first 300 obs are already removed
+
+# Replace
+data = data_lag
+```
+
+## Save the dataset and finish
+
+Lastly: save the dataset in a nice format.
+
+```{r,eval=FALSE}
+data_sim = list(
+  WC = WC_all,
+  Tr = Tr_all,
+  Tf = Tf_all,
+  Tw = Tw_all
+)
+
+data_list =      list(data = data,
+                      data_sim = data_sim,
+                      D = D,
+                      maxHP = maxHP,
+                      minHP = minHP,
+                      rampUpHP = rampUpHP,
+                      rampDownHP = rampDownHP,
+                      maxComfort = maxComfort,
+                      minComfort = minComfort,
+                      H = H,
+                      K= K)
+str(data_list)
+save(data_list ,file=paste(wpath,"data_2flex')
+```
+
