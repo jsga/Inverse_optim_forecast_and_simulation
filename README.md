@@ -37,7 +37,7 @@ From the data-analysis point of view, this repository consists on:
 	- `R_to_GDX.R` Collection of functions from [R_to_GAMS](https://github.com/jsga/R_to_GAMS).
 
 
-### HPC parallelization
+### HPC parallelization. Shell file
 
 This is performed by the `submit_adj_cv_all.sh` file. In short, we use 1 processor for each job, 24 jobs at the same time, for a maximum processing time of 12 hours:
 
@@ -70,6 +70,30 @@ qstat -a
 showq -u username
 qdel 00000[00]
 
+```
+
+
+### R code in each job
+Each job runs the script `cross_validation_adj_all.R`. The script starts by reading the job number, which was indicated in the .sh files in *$PBS_ARRAYID*
+
+
+```
+pbs_iter <- as.numeric(commandArgs(TRUE))
+message(paste('pbs_iter = ',pbs_iter,sep=""))
+```
+
+Then, we create a folder for each job. In the folders, the GAMS auxiliary files (gdx, lst, etc) will be saved. Folders are indexed with the job number.
+
+```
+newDir = paste(wpath, 'CrossVal_all/working_dir_',pbs_iter,sep="")
+dir.create(newDir)
+setwd(newDir)
+```
+
+Finally, we load the data that is used in each job. In this case, a different value for _K_. Other examples could include different train and test sets.
+
+```
+load(paste(wpath,"CrossVal_all/Init_data/input_",pbs_iter,sep=""))
 ```
 
 
