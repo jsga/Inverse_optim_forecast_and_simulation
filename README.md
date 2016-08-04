@@ -1,10 +1,10 @@
-This repository is a collection of code that has been one during my PhD at the Technical University of Denmark. The main purpose is to pass forward the knowledge to my colleagues (cheers to Nacho and Giulia!), but also for anyone to get inspired on the use of R, GAMS, inverse optimization and parallel computations.
+This repository is a collection of code done during my PhD at the Technical University of Denmark. The main purpose is to pass forward the knowledge to my colleagues (cheers to Nacho and Giulia!), but also for anyone to get inspired on the use of R, GAMS, inverse optimization and parallel computing.
 
 
 ### Contributions
 From the coding side, this repository is about:
 
-- Use R for data processing, combined with GAMS&CPLEX for optimization modeling. The interaction is done using [R_to_GAMS](https://github.com/jsga/R_to_GAMS) repository.
+- Use R for data processing, combined with GAMS&CPLEX for optimization modeling. The interaction is done using the functions from the [R_to_GAMS](https://github.com/jsga/R_to_GAMS) repository.
 
 - Use the [High Performance Computer (HPC)](http://www.hpc.dtu.dk/) from DTU to parallelize the code. Here we do a cross-validation, so the same chunk of code is repeated with different combination of the input parameter.
 
@@ -37,7 +37,7 @@ From the data-analysis point of view, this repository consists on:
 	- `R_to_GDX.R` Collection of functions from [R_to_GAMS](https://github.com/jsga/R_to_GAMS).
 
 
-### HPC parallelization. Shell file
+### HPC parallelization. Sh file
 
 This is performed by the `submit_adj_cv_all.sh` file. In short, we use 1 processor for each job, 24 jobs at the same time, for a maximum processing time of 12 hours:
 
@@ -58,14 +58,14 @@ Rscript /username/Simulated/CrossVal_all/cross_validation_adj_all.R $PBS_ARRAYID
 
 In the cluster, the following must be run:
 
-```
+```sh
 qrsh
-cd CrossVal_all/submit_adj_cv_all.sh
-qsub 
+cd CrossVal_all
+qsub submit_adj_cv_all.sh
 ```
 To check the status of the jobs, the queue, and delete jobs:
 
-```
+```sh
 qstat -a
 showq -u username
 qdel 00000[00]
@@ -77,14 +77,14 @@ qdel 00000[00]
 Each job runs the script `cross_validation_adj_all.R`. The script starts by reading the job number, which was indicated in the .sh files in *$PBS_ARRAYID*
 
 
-```
+```R
 pbs_iter <- as.numeric(commandArgs(TRUE))
 message(paste('pbs_iter = ',pbs_iter,sep=""))
 ```
 
 Then, we create a folder for each job. In the folders, the GAMS auxiliary files (gdx, lst, etc) will be saved. Folders are indexed with the job number.
 
-```
+```R
 newDir = paste(wpath, 'CrossVal_all/working_dir_',pbs_iter,sep="")
 dir.create(newDir)
 setwd(newDir)
@@ -92,7 +92,7 @@ setwd(newDir)
 
 Finally, we load the data that is used in each job. In this case, a different value for _K_. Other examples could include different train and test sets.
 
-```
+```R
 load(paste(wpath,"CrossVal_all/Init_data/input_",pbs_iter,sep=""))
 ```
 
